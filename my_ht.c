@@ -2,8 +2,9 @@
 
 static struct ht_info {
 	int total;
+	// key = word, value = pointer to an int value (number of occurances)
 	ck_ht_t hashtable;
-	pthread_mutex_t lock;
+	pthread_mutex_t lock; // only used for adding new entries to hashtable
 } *table_info;
 
 static void * ht_malloc(size_t sz)
@@ -48,6 +49,8 @@ cleanup:
 	return -1;
 }
 
+// return 0 for success, <1 if failed
+// char *word is dynamically allocated
 int hashtable_add(char *word)
 {
 	int wlen;
@@ -64,13 +67,17 @@ int hashtable_add(char *word)
 
 	// set entry for lookup
 	ck_ht_entry_key_set(&entry, word, wlen);
-	if (!ck_ht_get_spmc(&table_info->hashtable, hash, &entry)) {
-		// word not found, need to add a new entry
 
+	// try to retrieve this word from hashtable
+	if (!ck_ht_get_spmc(&table_info->hashtable, hash, &entry)) {
+
+		// word not found, need to add a new entry
 		pthread_mutex_lock(&table_info->lock);
 
 		// double check if still not exists
 		if (!ck_ht_get_spmc(&table_info->hashtable, hash, &entry)) {
+
+			// create a new entry with a value of 1
 			int *count;
 			count = malloc(sizeof(int));
 			if (count == NULL) {
@@ -78,10 +85,10 @@ int hashtable_add(char *word)
 				return -2;
 			}
 			*count = 1;
+
 			// store the new entry
 			ck_ht_entry_set(&entry, hash, word, wlen, count);
 			if (!ck_ht_put_spmc(&table_info->hashtable, hash, &entry)) {
-				// cannot store the new entry
 				free(count);
 				pthread_mutex_unlock(&table_info->lock);
 				return -3;
@@ -96,16 +103,20 @@ int hashtable_add(char *word)
 		pthread_mutex_unlock(&table_info->lock);
 	}
 
-	// word found, atomically increment by 1
+	// word found, atomically increment its value by 1
 	value = ck_ht_entry_value(&entry);
 	ck_pr_add_int(value, 1);
 	ck_pr_barrier();
-	// increment the total by 1
+
+	free(word);
+
+	// increment the total word count by 1
 	ck_pr_add_int(&table_info->total, 1);
 	ck_pr_barrier();
 	return 0;
 }
 
+// return the number of occurances this word
 int hashtable_get_count(char *word)
 {
 	int wlen;
@@ -126,12 +137,14 @@ int hashtable_get_count(char *word)
 	}
 }
 
+// return total number of word read
 int hashtable_get_total()
 {
 	return table_info->total;
 }
 
 // not thread safe
+// list all the words in the file
 void hashtable_print_all()
 {
 	int i;
@@ -149,8 +162,8 @@ void hashtable_print_all()
 	printf("total count = %d\n", table_info->total);
 }
 
-// print the most common word
 // not thread safe
+// print the most common word
 void hashtable_print_result()
 {
 	int i, max, *v;
@@ -173,10 +186,20 @@ void hashtable_print_result()
 	printf("most common: %s (%d)\n", word, max);
 }
 
+// cleanup the memory
 void hashtable_cleanup()
 {
-	// free(k);
-	// free(v);
+	int *v, i;
+	char *k;
+	ck_ht_entry_t *cursor;
+	ck_ht_iterator_t iterator = CK_HT_ITERATOR_INITIALIZER;
+	ck_ht_iterator_init(&iterator);
+	for (i = 0; ck_ht_next(&table_info->hashtable, &iterator, &cursor) == true; i++) {
+		k = ck_ht_entry_key(cursor);
+		v = ck_ht_entry_value(cursor);
+		free(k);
+		free(v);
+	}
 	ck_ht_destroy(&table_info->hashtable);
 	pthread_mutex_destroy(&table_info->lock);
 	free(table_info);

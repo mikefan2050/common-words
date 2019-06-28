@@ -8,6 +8,7 @@
 #include "my_ht.h"
 
 #define THD_NUM 2
+// #define CLEANUP_MEM
 
 pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
 pthread_cond_t cond = PTHREAD_COND_INITIALIZER;
@@ -19,9 +20,9 @@ static void *reader_fun(void *arg)
 	int status, result;
 	char *word;
 
-	// wait for the cond
+	// wait for cond
 	pthread_mutex_lock(&mutex);
-	// to ensure the thread is registered to cond
+	// mark that this thread is registered to cond
 	finished++;
 	pthread_cond_wait(&cond, &mutex);
 	pthread_mutex_unlock(&mutex);
@@ -55,18 +56,21 @@ static void file_process(char *fname, int first)
 	}
 	memset(tbuffer, 0, 1000);
 
+	// init setup, only need to be run once
 	if (first) {
 		// wait for processing threads to register
 		while (ck_pr_load_int(&finished) != THD_NUM);
 		finished = 0;
-		// wake up processing threads
+		// wake up processing threads using cond
 		pthread_mutex_lock(&mutex);
 		pthread_cond_broadcast(&cond);
 		pthread_mutex_unlock(&mutex);
 	}
 
 
+	// for each line (separated by '\n')
 	while (fgets(tbuffer, 1000, f)) {
+		// use strtok to break the line into words
 		char *pt = strtok(tbuffer, delim);
 		while (pt) {
 			word = malloc(sizeof(char) * strlen(pt));
@@ -76,6 +80,8 @@ static void file_process(char *fname, int first)
 				exit(1);
 			}
 			strncpy(word, pt, strlen(pt));
+
+			// add to the ring buffer as workload
 			status = ring_buffer_enqueue(word);
 			if (status) {
 				fprintf(stderr, "word rb enqueue error %s\n", word);
@@ -103,6 +109,7 @@ int main(int argc, char **argv)
 	file1 = argv[1];
 	file2 = argv[2];
 
+	// check if the input files exist
 	if (access(file1, R_OK)) {
 		fprintf(stderr, "file not exist: %s\n", file1);
 		exit(1);
@@ -114,38 +121,48 @@ int main(int argc, char **argv)
 
 	finished = 0;
 
+	// ring buffer storing pending workloads (spmc)
 	status = ring_buffer_init();
 	if (status) {
 		fprintf(stderr, "error: (rb) %d\n", status);
 		exit(1);
 	}
 
+	// hashtable for counting words in the file (mpmc for existing entry)
 	status = hashtable_init();
 	if (status) {
 		fprintf(stderr, "error: (ht) %d\n", status);
 		exit(1);
 	}
 
+	// create processing threads
 	for (i = 0; i < THD_NUM; i++) {
 		pthread_create(&readers[i], NULL, reader_fun, NULL);
 	}
 
+	// start I/O operations on file
 	file_process(file1, 1);
 	file_process(file2, 0);
 
-	// while size > 0, spin
+	// wait for all processing thread to complete the workloads
+	// in the ring buffer
 	while (ring_buffer_size() > 0);
 
-	// send signal to kill the threads
+	// send signal (atomic change) to kill the threads
 	ck_pr_add_int(&finished, 1);
 
 	for (i = 0; i < THD_NUM; i++) {
 		pthread_join(readers[i], NULL);
 	}
 
-	// cleanup code
+	// go through the hashtable and find the most common word
 	hashtable_print_result();
+
+	// cleanup code if needed
+#ifdef CLEANUP_MEM
 	ring_buffer_cleanup();
+	hashtable_cleanup();
+#endif /*CLEANUP_MEM*/
 
 	return 0;
 }
