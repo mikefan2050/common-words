@@ -8,13 +8,16 @@
 #include "my_ht.h"
 
 #define THD_NUM 2
-// #define CLEANUP_MEM
+#define CLEANUP_MEM
 
 pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
 pthread_cond_t cond = PTHREAD_COND_INITIALIZER;
 
 static int finished;
 
+// consumer function: take words from ring buffer and add to hash table
+//
+// add to hash table concurrently
 static void *reader_fun(void *arg)
 {
 	int status, result;
@@ -41,10 +44,14 @@ static void *reader_fun(void *arg)
 	return 0;
 }
 
+// producer function: read the file, breaks line into words and add to ring
+// buffer
+//
+// it should be a bottleneck because of the single thread
 static void file_process(char *fname, int first)
 {
 	FILE *f;
-	char tbuffer[1000], *word;
+	char tbuffer[1000];
 	int status;
 
 	char delim[] = "\n\t ,.!?\"\'";
@@ -70,15 +77,18 @@ static void file_process(char *fname, int first)
 
 	// for each line (separated by '\n')
 	while (fgets(tbuffer, 1000, f)) {
+		char *pt;
 		// use strtok to break the line into words
-		char *pt = strtok(tbuffer, delim);
+		pt = strtok(tbuffer, delim);
 		while (pt) {
-			word = malloc(sizeof(char) * strlen(pt));
+			char *word;
+			word = malloc(sizeof(char) * (strlen(pt) + 1));
 			if (word == NULL) {
 				fprintf(stderr, "word malloc error %s\n", pt);
 				fclose(f);
 				exit(1);
 			}
+			memset(word, 0, strlen(pt)+1);
 			strncpy(word, pt, strlen(pt));
 
 			// add to the ring buffer as workload

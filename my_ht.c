@@ -108,11 +108,12 @@ int hashtable_add(char *word)
 	ck_pr_add_int(value, 1);
 	ck_pr_barrier();
 
-	free(word);
-
 	// increment the total word count by 1
 	ck_pr_add_int(&table_info->total, 1);
 	ck_pr_barrier();
+
+	// free the unused string
+	free(word);
 	return 0;
 }
 
@@ -152,11 +153,11 @@ void hashtable_print_all()
 	ck_ht_iterator_t iterator = CK_HT_ITERATOR_INITIALIZER;
 	ck_ht_iterator_init(&iterator);
 	for (i = 0; ck_ht_next(&table_info->hashtable, &iterator, &cursor) == true; i++) {
-			void *k, *v;
-			k = ck_ht_entry_key(cursor);
-			v = ck_ht_entry_value(cursor);
-			printf("%s: ", (char *)k);
-			printf("%d\n", *(int *)v);
+		void *k, *v;
+		k = ck_ht_entry_key(cursor);
+		v = ck_ht_entry_value(cursor);
+		printf("%s: ", (char *)k);
+		printf("%d\n", *(int *)v);
 	}
 	printf("num of words = %d\n", i);
 	printf("total count = %d\n", table_info->total);
@@ -176,12 +177,12 @@ void hashtable_print_result()
 
 	ck_ht_iterator_init(&iterator);
 	for (i = 0; ck_ht_next(&table_info->hashtable, &iterator, &cursor) == true; i++) {
-			k = ck_ht_entry_key(cursor);
-			v = ck_ht_entry_value(cursor);
-			if (*v > max) {
-				max = *v;
-				word = k;
-			}
+		k = ck_ht_entry_key(cursor);
+		v = ck_ht_entry_value(cursor);
+		if (*v > max) {
+			max = *v;
+			word = k;
+		}
 	}
 	printf("most common: %s (%d)\n", word, max);
 }
